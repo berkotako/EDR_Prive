@@ -179,6 +179,7 @@ func (c *Consumer) worker(ctx context.Context, workerID int) {
 	defer sub.Unsubscribe()
 
 	batch := make([]Event, 0, batchSize)
+	batchMsgs := make([]*nats.Msg, 0, batchSize)
 	batchTimer := time.NewTimer(batchTimeout * time.Second)
 	defer batchTimer.Stop()
 
@@ -187,7 +188,10 @@ func (c *Consumer) worker(ctx context.Context, workerID int) {
 		case <-ctx.Done():
 			// Flush remaining events before shutdown
 			if len(batch) > 0 {
-				c.flushBatch(workerID, batch)
+				if c.flushBatchWithAck(workerID, batch, batchMsgs) {
+					batch = batch[:0]
+					batchMsgs = batchMsgs[:0]
+				}
 			}
 			log.Infof("Worker %d shutting down", workerID)
 			return
@@ -195,8 +199,10 @@ func (c *Consumer) worker(ctx context.Context, workerID int) {
 		case <-batchTimer.C:
 			// Flush on timeout
 			if len(batch) > 0 {
-				c.flushBatch(workerID, batch)
-				batch = batch[:0]
+				if c.flushBatchWithAck(workerID, batch, batchMsgs) {
+					batch = batch[:0]
+					batchMsgs = batchMsgs[:0]
+				}
 			}
 			batchTimer.Reset(batchTimeout * time.Second)
 
@@ -223,18 +229,16 @@ func (c *Consumer) worker(ctx context.Context, workerID int) {
 				}
 
 				batch = append(batch, event)
+				batchMsgs = append(batchMsgs, msg)
 				c.eventsProcessed.Add(1)
 
 				// Flush when batch is full
 				if len(batch) >= batchSize {
-					c.flushBatch(workerID, batch)
-					batch = batch[:0]
-					batchTimer.Reset(batchTimeout * time.Second)
-
-					// Acknowledge all messages in the batch
-					for _, m := range msgs {
-						m.Ack()
+					if c.flushBatchWithAck(workerID, batch, batchMsgs) {
+						batch = batch[:0]
+						batchMsgs = batchMsgs[:0]
 					}
+					batchTimer.Reset(batchTimeout * time.Second)
 					break
 				}
 			}
@@ -242,10 +246,10 @@ func (c *Consumer) worker(ctx context.Context, workerID int) {
 	}
 }
 
-// flushBatch writes a batch of events to ClickHouse
-func (c *Consumer) flushBatch(workerID int, batch []Event) {
+// flushBatchWithAck writes a batch of events to ClickHouse and acknowledges NATS messages on success
+func (c *Consumer) flushBatchWithAck(workerID int, batch []Event, msgs []*nats.Msg) bool {
 	if len(batch) == 0 {
-		return
+		return true
 	}
 
 	start := time.Now()
@@ -269,7 +273,18 @@ func (c *Consumer) flushBatch(workerID int, batch []Event) {
 	if err != nil {
 		log.Errorf("Worker %d: Failed to insert batch after %d retries: %v", workerID, maxRetries, err)
 		c.errors.Add(uint64(len(batch)))
-		return
+		// NAK all messages so they can be redelivered
+		for _, msg := range msgs {
+			msg.Nak()
+		}
+		return false
+	}
+
+	// Success! Acknowledge all messages
+	for _, msg := range msgs {
+		if err := msg.Ack(); err != nil {
+			log.Warnf("Worker %d: Failed to ack message: %v", workerID, err)
+		}
 	}
 
 	// Update metrics
@@ -279,6 +294,8 @@ func (c *Consumer) flushBatch(workerID int, batch []Event) {
 	duration := time.Since(start)
 	log.Debugf("Worker %d: Flushed %d events in %v (%.0f events/sec)",
 		workerID, len(batch), duration, float64(len(batch))/duration.Seconds())
+
+	return true
 }
 
 // insertBatch performs the actual ClickHouse insert
