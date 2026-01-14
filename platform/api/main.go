@@ -126,6 +126,7 @@ func setupRouter(db *sql.DB, licService *licenseService.LicenseService) *gin.Eng
 	dlpHandler := handlers.NewDLPHandler(db)
 	agentHandler := handlers.NewAgentHandler(db)
 	telemetryHandler := handlers.NewTelemetryHandler(db)
+	notificationHandler := handlers.NewNotificationHandler(db)
 
 	// API v1 routes
 	v1 := router.Group("/api/v1")
@@ -150,8 +151,11 @@ func setupRouter(db *sql.DB, licService *licenseService.LicenseService) *gin.Eng
 		// Agent Management
 		agents := v1.Group("/agents")
 		{
+			agents.POST("/register", agentHandler.RegisterAgent)
+			agents.POST("/heartbeat", agentHandler.ProcessHeartbeat)
 			agents.GET("", agentHandler.ListAgents)
 			agents.GET("/:id", agentHandler.GetAgent)
+			agents.GET("/:id/health", agentHandler.GetAgentHealth)
 			agents.PUT("/:id", agentHandler.UpdateAgent)
 			agents.DELETE("/:id", agentHandler.DeleteAgent)
 
@@ -195,6 +199,18 @@ func setupRouter(db *sql.DB, licService *licenseService.LicenseService) *gin.Eng
 			licenses.POST("/trial", licenseHandler.GenerateTrialLicense)
 			licenses.DELETE("/:id", licenseHandler.RevokeLicense)
 			licenses.GET("/:id/usage", licenseHandler.GetLicenseUsage)
+		}
+
+		// Notification Channels
+		notifications := v1.Group("/notifications")
+		{
+			notifications.GET("/channels", notificationHandler.ListChannels)
+			notifications.GET("/channels/:id", notificationHandler.GetChannel)
+			notifications.POST("/channels", notificationHandler.CreateChannel)
+			notifications.PUT("/channels/:id", notificationHandler.UpdateChannel)
+			notifications.DELETE("/channels/:id", notificationHandler.DeleteChannel)
+			notifications.POST("/send", notificationHandler.SendNotification)
+			notifications.POST("/test", notificationHandler.TestChannel)
 		}
 	}
 
