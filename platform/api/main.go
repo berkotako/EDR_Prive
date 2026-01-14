@@ -146,6 +146,18 @@ func setupRouter() *gin.Engine {
 			alerts.PUT("/rules/:id", handlers.UpdateAlertRule)
 			alerts.DELETE("/rules/:id", handlers.DeleteAlertRule)
 		}
+
+		// License Management
+		licenses := v1.Group("/licenses")
+		{
+			licenses.GET("", handlers.ListLicenses)
+			licenses.GET("/:id", handlers.GetLicense)
+			licenses.POST("", handlers.CreateLicense)
+			licenses.POST("/validate", handlers.ValidateLicense)
+			licenses.POST("/trial", handlers.GenerateTrialLicense)
+			licenses.DELETE("/:id", handlers.RevokeLicense)
+			licenses.GET("/:id/usage", handlers.GetLicenseUsage)
+		}
 	}
 
 	return router
