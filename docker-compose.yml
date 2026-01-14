@@ -1,0 +1,179 @@
+version: '3.8'
+
+services:
+  # NATS JetStream - Message Broker
+  nats:
+    image: nats:2.10-alpine
+    container_name: prive-nats
+    ports:
+      - "4222:4222"  # Client connections
+      - "8222:8222"  # HTTP monitoring
+      - "6222:6222"  # Cluster routing
+    command:
+      - "-js"  # Enable JetStream
+      - "-m"
+      - "8222"  # Monitoring port
+      - "--store_dir=/data"
+      - "--max_file_store=10GB"
+    volumes:
+      - nats-data:/data
+    networks:
+      - prive-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ClickHouse - Analytical Database
+  clickhouse:
+    image: clickhouse/clickhouse-server:23.12-alpine
+    container_name: prive-clickhouse
+    ports:
+      - "9000:9000"  # Native protocol
+      - "8123:8123"  # HTTP interface
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    networks:
+      - prive-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+
+  # Ingestor - gRPC Event Intake
+  ingestor:
+    build:
+      context: ./ingestor
+      dockerfile: Dockerfile
+    container_name: prive-ingestor
+    ports:
+      - "50051:50051"  # gRPC endpoint
+    environment:
+      INGESTOR_GRPC_PORT: "50051"
+      NATS_URL: "nats://nats:4222"
+      RUST_LOG: info
+    depends_on:
+      nats:
+        condition: service_healthy
+    networks:
+      - prive-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 512M
+
+  # Consumer - NATS to ClickHouse
+  consumer:
+    build:
+      context: ./consumer
+      dockerfile: Dockerfile
+    container_name: prive-consumer
+    environment:
+      NATS_URL: "nats://nats:4222"
+      CLICKHOUSE_ADDR: "clickhouse:9000"
+    depends_on:
+      nats:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    networks:
+      - prive-network
+    restart: unless-stopped
+    deploy:
+      replicas: 2  # Run 2 consumers for higher throughput
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+
+  # PostgreSQL - Metadata & Configuration (Optional)
+  postgres:
+    image: postgres:16-alpine
+    container_name: prive-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: prive
+      POSTGRES_USER: prive
+      POSTGRES_PASSWORD: prive_secure_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - prive-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prive"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Grafana - Visualization (Optional)
+  grafana:
+    image: grafana/grafana:10.2.3
+    container_name: prive-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./deployment/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./deployment/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      - clickhouse
+    networks:
+      - prive-network
+    restart: unless-stopped
+
+  # Prometheus - Metrics Collection (Optional)
+  prometheus:
+    image: prom/prometheus:v2.48.1
+    container_name: prive-prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+    volumes:
+      - prometheus-data:/prometheus
+      - ./deployment/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - prive-network
+    restart: unless-stopped
+
+volumes:
+  nats-data:
+    driver: local
+  clickhouse-data:
+    driver: local
+  postgres-data:
+    driver: local
+  grafana-data:
+    driver: local
+  prometheus-data:
+    driver: local
+
+networks:
+  prive-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
