@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+package telemetry;
+
+option go_package = "github.com/sentinel-enterprise/proto/telemetry";
+
+// TelemetryService defines the gRPC interface for streaming security events
+// from agents to the ingestion layer.
+service TelemetryService {
+  // StreamEvents provides a bidirectional stream for high-throughput event ingestion.
+  // Agents push events in batches; the server responds with acknowledgments.
+  rpc StreamEvents(stream Event) returns (stream EventAck);
+
+  // SubmitEvent is a unary RPC for low-volume or fallback submission.
+  rpc SubmitEvent(Event) returns (EventAck);
+}
+
+// EventType categorizes the security event for indexing and alerting.
+enum EventType {
+  EVENT_TYPE_UNSPECIFIED = 0;
+  PROCESS_START = 1;
+  PROCESS_TERMINATE = 2;
+  FILE_ACCESS = 3;
+  FILE_MODIFY = 4;
+  FILE_DELETE = 5;
+  NETWORK_CONN = 6;
+  REGISTRY_MODIFY = 7;
+  DLP_VIOLATION = 8;
+  AUTHENTICATION = 9;
+}
+
+// Event represents a single telemetry event captured by the agent.
+// Designed for high-frequency ingestion with minimal serialization overhead.
+message Event {
+  // agent_id uniquely identifies the endpoint (UUID format).
+  string agent_id = 1;
+
+  // timestamp is Unix epoch in milliseconds (UTC).
+  int64 timestamp = 2;
+
+  // event_type categorizes the event (process, file, network, etc.).
+  EventType event_type = 3;
+
+  // mitre_tactic maps to MITRE ATT&CK framework (e.g., "TA0002_Execution").
+  // This enables compliance-driven threat hunting.
+  string mitre_tactic = 4;
+
+  // mitre_technique provides granular mapping (e.g., "T1059_Command_and_Scripting").
+  string mitre_technique = 5;
+
+  // severity indicates risk level (0=info, 1=low, 2=medium, 3=high, 4=critical).
+  int32 severity = 6;
+
+  // payload contains event-specific data as JSON for flexibility.
+  // Schema varies by event_type:
+  //   PROCESS_START: {"pid":1234,"ppid":500,"cmdline":"...","user":"..."}
+  //   FILE_ACCESS: {"path":"...","operation":"read","hash":"..."}
+  //   NETWORK_CONN: {"src_ip":"...","dst_ip":"...","dst_port":443,"protocol":"tcp"}
+  //   DLP_VIOLATION: {"rule_id":"...","matched_pattern":"...","file_path":"..."}
+  string payload = 7;
+
+  // tenant_id supports multi-tenancy (organization/customer identifier).
+  string tenant_id = 8;
+
+  // hostname of the endpoint where the event originated.
+  string hostname = 9;
+
+  // os_type for platform-specific processing (windows, linux, macos).
+  string os_type = 10;
+}
+
+// EventAck acknowledges successful receipt and processing of events.
+message EventAck {
+  // success indicates if the event was accepted.
+  bool success = 1;
+
+  // event_id is the server-assigned UUID for tracking.
+  string event_id = 2;
+
+  // error_message provides details if success=false.
+  string error_message = 3;
+
+  // server_timestamp records when the event was received (for latency analysis).
+  int64 server_timestamp = 4;
+}
