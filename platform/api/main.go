@@ -150,8 +150,11 @@ func setupRouter(db *sql.DB, licService *licenseService.LicenseService) *gin.Eng
 		// Agent Management
 		agents := v1.Group("/agents")
 		{
+			agents.POST("/register", agentHandler.RegisterAgent)
+			agents.POST("/heartbeat", agentHandler.ProcessHeartbeat)
 			agents.GET("", agentHandler.ListAgents)
 			agents.GET("/:id", agentHandler.GetAgent)
+			agents.GET("/:id/health", agentHandler.GetAgentHealth)
 			agents.PUT("/:id", agentHandler.UpdateAgent)
 			agents.DELETE("/:id", agentHandler.DeleteAgent)
 
