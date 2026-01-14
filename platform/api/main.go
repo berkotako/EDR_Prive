@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"database/sql"
 	"fmt"
 	"net/http"
@@ -219,10 +220,21 @@ func loadLicenseKeys(privateKeyPath, publicKeyPath string) (privateKey, publicKe
 		return nil, nil, fmt.Errorf("failed to read private key: %w", err)
 	}
 
+	// Validate Ed25519 private key size (64 bytes)
+	if len(privateKey) != ed25519.PrivateKeySize {
+		return nil, nil, fmt.Errorf("invalid private key size: expected %d bytes, got %d bytes", ed25519.PrivateKeySize, len(privateKey))
+	}
+
 	publicKey, err = os.ReadFile(publicKeyPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to read public key: %w", err)
 	}
 
+	// Validate Ed25519 public key size (32 bytes)
+	if len(publicKey) != ed25519.PublicKeySize {
+		return nil, nil, fmt.Errorf("invalid public key size: expected %d bytes, got %d bytes", ed25519.PublicKeySize, len(publicKey))
+	}
+
+	log.Info("License keys validated successfully")
 	return privateKey, publicKey, nil
 }
