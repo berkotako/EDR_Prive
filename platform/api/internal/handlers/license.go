@@ -9,10 +9,23 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/sentinel-enterprise/platform/license/models"
+	"github.com/sentinel-enterprise/platform/license/service"
 )
 
+// LicenseHandler handles license-related requests
+type LicenseHandler struct {
+	service *service.LicenseService
+}
+
+// NewLicenseHandler creates a new license handler
+func NewLicenseHandler(service *service.LicenseService) *LicenseHandler {
+	return &LicenseHandler{
+		service: service,
+	}
+}
+
 // CreateLicense generates a new license key
-func CreateLicense(c *gin.Context) {
+func (h *LicenseHandler) CreateLicense(c *gin.Context) {
 	var req models.CreateLicenseRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -20,19 +33,17 @@ func CreateLicense(c *gin.Context) {
 		return
 	}
 
-	// TODO: Call license service
-	license := &models.License{
-		ID:            "LIC-" + generateID(),
-		LicenseKey:    "PRIVE-V1-XXXXX-XXXXX-XXXXX-XXXXX",
-		CustomerEmail: req.CustomerEmail,
-		CustomerName:  req.CustomerName,
-		CompanyName:   req.CompanyName,
-		Tier:          req.Tier,
+	if h.service == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "License service not available"})
+		return
 	}
 
-	maxAgents, maxUsers := models.GetLimitsForTier(req.Tier)
-	license.MaxAgents = maxAgents
-	license.MaxUsers = maxUsers
+	license, err := h.service.CreateLicense(req)
+	if err != nil {
+		log.Errorf("Failed to create license: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
 	log.Infof("Created license for %s (%s tier)", req.CustomerEmail, req.Tier)
 
@@ -43,7 +54,7 @@ func CreateLicense(c *gin.Context) {
 }
 
 // ValidateLicense checks if a license key is valid
-func ValidateLicense(c *gin.Context) {
+func (h *LicenseHandler) ValidateLicense(c *gin.Context) {
 	var req models.ValidateLicenseRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -51,62 +62,87 @@ func ValidateLicense(c *gin.Context) {
 		return
 	}
 
-	// TODO: Call license service for validation
-	features := models.GetFeaturesForTier(models.TierPro)
+	if h.service == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "License service not available"})
+		return
+	}
 
-	response := models.ValidateLicenseResponse{
-		Valid:           true,
-		Features:        features,
-		RemainingAgents: 95,
-		ExpiresInDays:   365,
-		Message:         "License is valid and active",
+	response, err := h.service.ValidateLicense(req.LicenseKey, req.AgentID)
+	if err != nil {
+		log.Errorf("Failed to validate license: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if !response.Valid {
+		c.JSON(http.StatusUnauthorized, response)
+		return
 	}
 
 	c.JSON(http.StatusOK, response)
 }
 
 // ListLicenses retrieves all licenses
-func ListLicenses(c *gin.Context) {
-	// TODO: Implement pagination
-	licenses := []models.License{
-		{
-			ID:            "LIC-001",
-			CustomerEmail: "demo@example.com",
-			CustomerName:  "Demo Customer",
-			CompanyName:   "Acme Corp",
-			Tier:          models.TierEnterprise,
-			MaxAgents:     -1, // Unlimited
-			MaxUsers:      -1,
-			IsActive:      true,
-		},
+func (h *LicenseHandler) ListLicenses(c *gin.Context) {
+	if h.service == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "License service not available"})
+		return
+	}
+
+	// Parse pagination parameters
+	limit := 50
+	offset := 0
+
+	licenses, total, err := h.service.ListLicenses(limit, offset)
+	if err != nil {
+		log.Errorf("Failed to list licenses: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"licenses": licenses,
-		"total":    len(licenses),
+		"total":    total,
+		"limit":    limit,
+		"offset":   offset,
 	})
 }
 
 // GetLicense retrieves a specific license
-func GetLicense(c *gin.Context) {
+func (h *LicenseHandler) GetLicense(c *gin.Context) {
 	licenseID := c.Param("id")
 
-	// TODO: Query database
-	license := models.License{
-		ID:            licenseID,
-		CustomerEmail: "customer@example.com",
-		Tier:          models.TierPro,
-		IsActive:      true,
+	if h.service == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "License service not available"})
+		return
+	}
+
+	license, err := h.service.GetLicense(licenseID)
+	if err != nil {
+		log.Errorf("Failed to get license: %v", err)
+		c.JSON(http.StatusNotFound, gin.H{"error": "License not found"})
+		return
 	}
 
 	c.JSON(http.StatusOK, license)
 }
 
 // RevokeLicense deactivates a license
-func RevokeLicense(c *gin.Context) {
+func (h *LicenseHandler) RevokeLicense(c *gin.Context) {
 	licenseID := c.Param("id")
 
-	// TODO: Call service to revoke
+	if h.service == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "License service not available"})
+		return
+	}
+
+	err := h.service.RevokeLicense(licenseID, "Revoked via API")
+	if err != nil {
+		log.Errorf("Failed to revoke license: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
 	log.Warnf("Revoked license: %s", licenseID)
 
 	c.JSON(http.StatusOK, gin.H{
@@ -115,7 +151,7 @@ func RevokeLicense(c *gin.Context) {
 }
 
 // GenerateTrialLicense creates a trial license
-func GenerateTrialLicense(c *gin.Context) {
+func (h *LicenseHandler) GenerateTrialLicense(c *gin.Context) {
 	type TrialRequest struct {
 		Email string `json:"email" binding:"required,email"`
 		Name  string `json:"name" binding:"required"`
@@ -127,16 +163,16 @@ func GenerateTrialLicense(c *gin.Context) {
 		return
 	}
 
-	// TODO: Generate trial license
-	license := &models.License{
-		ID:            "TRIAL-" + generateID(),
-		LicenseKey:    "PRIVE-V1-TRIAL-XXXXX-XXXXX",
-		CustomerEmail: req.Email,
-		CustomerName:  req.Name,
-		Tier:          models.TierPro,
-		MaxAgents:     10,
-		MaxUsers:      3,
-		IsActive:      true,
+	if h.service == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "License service not available"})
+		return
+	}
+
+	license, err := h.service.GenerateTrialLicense(req.Email, req.Name)
+	if err != nil {
+		log.Errorf("Failed to generate trial license: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
@@ -146,21 +182,20 @@ func GenerateTrialLicense(c *gin.Context) {
 }
 
 // GetLicenseUsage returns usage statistics
-func GetLicenseUsage(c *gin.Context) {
+func (h *LicenseHandler) GetLicenseUsage(c *gin.Context) {
 	licenseID := c.Param("id")
 
-	usage := models.LicenseUsage{
-		LicenseID:      licenseID,
-		ActiveAgents:   45,
-		ActiveUsers:    8,
-		EventsIngested: 12500000,
-		StorageUsedGB:  125.5,
+	if h.service == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "License service not available"})
+		return
+	}
+
+	usage, err := h.service.GetLicenseUsage(licenseID)
+	if err != nil {
+		log.Errorf("Failed to get license usage: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 
 	c.JSON(http.StatusOK, usage)
-}
-
-func generateID() string {
-	// Simple ID generation (replace with UUID in production)
-	return "XXXXX"
 }

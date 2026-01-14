@@ -6,19 +6,21 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/sentinel-enterprise/platform/api/internal/handlers"
-	"github.com/sentinel-enterprise/platform/api/internal/models"
+	"github.com/sentinel-enterprise/platform/database"
+	licenseService "github.com/sentinel-enterprise/platform/license/service"
 )
 
 const (
@@ -34,14 +36,43 @@ func main() {
 
 	// Load configuration
 	port := getEnv("API_PORT", defaultPort)
-	dbURL := getEnv("DATABASE_URL", "")
 
 	// Initialize database connection (PostgreSQL for metadata)
-	// TODO: Initialize actual database
-	log.Info("Database connection initialized (skeleton)")
+	dbConfig := database.Config{
+		Host:     getEnv("DB_HOST", "localhost"),
+		Port:     getEnvInt("DB_PORT", 5432),
+		User:     getEnv("DB_USER", "prive_app"),
+		Password: getEnv("DB_PASSWORD", "change_this_password"),
+		Database: getEnv("DB_NAME", "prive"),
+		SSLMode:  getEnv("DB_SSLMODE", "disable"),
+	}
+
+	db, err := database.InitDB(dbConfig)
+	if err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
+	}
+	defer database.Close(db)
+
+	// Initialize license service
+	// Note: In production, load keys from secure storage (e.g., AWS KMS, HashiCorp Vault)
+	privateKeyPath := getEnv("LICENSE_PRIVATE_KEY_PATH", "")
+	publicKeyPath := getEnv("LICENSE_PUBLIC_KEY_PATH", "")
+
+	var licenseService *licenseService.LicenseService
+	if privateKeyPath != "" && publicKeyPath != "" {
+		privateKey, publicKey, err := loadLicenseKeys(privateKeyPath, publicKeyPath)
+		if err != nil {
+			log.Warnf("Failed to load license keys: %v. License features will be limited.", err)
+		} else {
+			licenseService = licenseService.NewLicenseService(db, privateKey, publicKey)
+			log.Info("License service initialized successfully")
+		}
+	} else {
+		log.Warn("License key paths not configured. Set LICENSE_PRIVATE_KEY_PATH and LICENSE_PUBLIC_KEY_PATH environment variables.")
+	}
 
 	// Initialize Gin router
-	router := setupRouter()
+	router := setupRouter(db, licenseService)
 
 	// Create HTTP server
 	srv := &http.Server{
@@ -77,7 +108,7 @@ func main() {
 	log.Info("Server stopped")
 }
 
-func setupRouter() *gin.Engine {
+func setupRouter(db *sql.DB, licService *licenseService.LicenseService) *gin.Engine {
 	router := gin.Default()
 
 	// Health check
@@ -88,6 +119,9 @@ func setupRouter() *gin.Engine {
 			"time":    time.Now().UTC(),
 		})
 	})
+
+	// Initialize handlers with dependencies
+	licenseHandler := handlers.NewLicenseHandler(licService)
 
 	// API v1 routes
 	v1 := router.Group("/api/v1")
@@ -150,13 +184,13 @@ func setupRouter() *gin.Engine {
 		// License Management
 		licenses := v1.Group("/licenses")
 		{
-			licenses.GET("", handlers.ListLicenses)
-			licenses.GET("/:id", handlers.GetLicense)
-			licenses.POST("", handlers.CreateLicense)
-			licenses.POST("/validate", handlers.ValidateLicense)
-			licenses.POST("/trial", handlers.GenerateTrialLicense)
-			licenses.DELETE("/:id", handlers.RevokeLicense)
-			licenses.GET("/:id/usage", handlers.GetLicenseUsage)
+			licenses.GET("", licenseHandler.ListLicenses)
+			licenses.GET("/:id", licenseHandler.GetLicense)
+			licenses.POST("", licenseHandler.CreateLicense)
+			licenses.POST("/validate", licenseHandler.ValidateLicense)
+			licenses.POST("/trial", licenseHandler.GenerateTrialLicense)
+			licenses.DELETE("/:id", licenseHandler.RevokeLicense)
+			licenses.GET("/:id/usage", licenseHandler.GetLicenseUsage)
 		}
 	}
 
@@ -168,4 +202,27 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func getEnvInt(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		if intVal, err := strconv.Atoi(value); err == nil {
+			return intVal
+		}
+	}
+	return defaultValue
+}
+
+func loadLicenseKeys(privateKeyPath, publicKeyPath string) (privateKey, publicKey []byte, err error) {
+	privateKey, err = os.ReadFile(privateKeyPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read private key: %w", err)
+	}
+
+	publicKey, err = os.ReadFile(publicKeyPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read public key: %w", err)
+	}
+
+	return privateKey, publicKey, nil
 }
