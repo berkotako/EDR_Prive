@@ -199,6 +199,36 @@ CREATE TABLE IF NOT EXISTS mitre_techniques (
 );
 
 -- ============================================================================
+-- NOTIFICATION CHANNELS TABLES
+-- ============================================================================
+
+-- Notification channels (Email, Slack, PagerDuty, Webhooks)
+CREATE TABLE IF NOT EXISTS notification_channels (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    license_id      UUID REFERENCES licenses(id) ON DELETE CASCADE,
+    name            VARCHAR(255) NOT NULL,
+    type            VARCHAR(50) CHECK (type IN ('email', 'slack', 'pagerduty', 'webhook')),
+    enabled         BOOLEAN DEFAULT TRUE,
+    config          JSONB DEFAULT '{}',
+    created_at      TIMESTAMP DEFAULT NOW(),
+    updated_at      TIMESTAMP DEFAULT NOW()
+);
+
+-- Notification logs (audit trail of sent notifications)
+CREATE TABLE IF NOT EXISTS notification_logs (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    channel_id      UUID REFERENCES notification_channels(id) ON DELETE SET NULL,
+    channel_type    VARCHAR(50),
+    subject         TEXT NOT NULL,
+    message         TEXT NOT NULL,
+    priority        VARCHAR(50) CHECK (priority IN ('low', 'medium', 'high', 'critical')),
+    status          VARCHAR(50) CHECK (status IN ('sent', 'failed', 'pending')),
+    error           TEXT,
+    sent_at         TIMESTAMP DEFAULT NOW(),
+    metadata        JSONB DEFAULT '{}'
+);
+
+-- ============================================================================
 -- INDEXES FOR PERFORMANCE
 -- ============================================================================
 
@@ -233,6 +263,12 @@ CREATE INDEX idx_alert_instances_rule ON alert_instances(rule_id);
 CREATE INDEX idx_alert_instances_status ON alert_instances(status);
 CREATE INDEX idx_alert_instances_created ON alert_instances(created_at DESC);
 
+-- Notification indexes
+CREATE INDEX idx_notification_channels_license ON notification_channels(license_id);
+CREATE INDEX idx_notification_channels_type ON notification_channels(type);
+CREATE INDEX idx_notification_logs_channel ON notification_logs(channel_id);
+CREATE INDEX idx_notification_logs_sent_at ON notification_logs(sent_at DESC);
+
 -- ============================================================================
 -- TRIGGERS FOR AUTOMATIC TIMESTAMPS
 -- ============================================================================
@@ -260,6 +296,9 @@ CREATE TRIGGER update_dlp_policies_updated_at BEFORE UPDATE ON dlp_policies
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TRIGGER update_alert_rules_updated_at BEFORE UPDATE ON alert_rules
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_notification_channels_updated_at BEFORE UPDATE ON notification_channels
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- ============================================================================
