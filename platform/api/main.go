@@ -123,6 +123,9 @@ func setupRouter(db *sql.DB, licService *licenseService.LicenseService) *gin.Eng
 
 	// Initialize handlers with dependencies
 	licenseHandler := handlers.NewLicenseHandler(licService)
+	dlpHandler := handlers.NewDLPHandler(db)
+	agentHandler := handlers.NewAgentHandler(db)
+	telemetryHandler := handlers.NewTelemetryHandler(db)
 
 	// API v1 routes
 	v1 := router.Group("/api/v1")
@@ -130,56 +133,56 @@ func setupRouter(db *sql.DB, licService *licenseService.LicenseService) *gin.Eng
 		// DLP Policy Management
 		dlp := v1.Group("/dlp")
 		{
-			dlp.GET("/policies", handlers.ListDLPPolicies)
-			dlp.GET("/policies/:id", handlers.GetDLPPolicy)
-			dlp.POST("/policies", handlers.CreateDLPPolicy)
-			dlp.PUT("/policies/:id", handlers.UpdateDLPPolicy)
-			dlp.DELETE("/policies/:id", handlers.DeleteDLPPolicy)
+			dlp.GET("/policies", dlpHandler.ListDLPPolicies)
+			dlp.GET("/policies/:id", dlpHandler.GetDLPPolicy)
+			dlp.POST("/policies", dlpHandler.CreateDLPPolicy)
+			dlp.PUT("/policies/:id", dlpHandler.UpdateDLPPolicy)
+			dlp.DELETE("/policies/:id", dlpHandler.DeleteDLPPolicy)
 
 			// Fingerprint management
-			dlp.POST("/policies/:id/fingerprints", handlers.AddFingerprints)
-			dlp.DELETE("/policies/:id/fingerprints/:fingerprint_id", handlers.DeleteFingerprint)
+			dlp.POST("/policies/:id/fingerprints", dlpHandler.AddFingerprints)
+			dlp.DELETE("/policies/:id/fingerprints/:fingerprint_id", dlpHandler.DeleteFingerprint)
 
 			// Policy testing
-			dlp.POST("/test", handlers.TestDLPPolicy)
+			dlp.POST("/test", dlpHandler.TestDLPPolicy)
 		}
 
 		// Agent Management
 		agents := v1.Group("/agents")
 		{
-			agents.GET("", handlers.ListAgents)
-			agents.GET("/:id", handlers.GetAgent)
-			agents.PUT("/:id", handlers.UpdateAgent)
-			agents.DELETE("/:id", handlers.DeleteAgent)
+			agents.GET("", agentHandler.ListAgents)
+			agents.GET("/:id", agentHandler.GetAgent)
+			agents.PUT("/:id", agentHandler.UpdateAgent)
+			agents.DELETE("/:id", agentHandler.DeleteAgent)
 
 			// Agent configuration
-			agents.GET("/:id/config", handlers.GetAgentConfig)
-			agents.PUT("/:id/config", handlers.UpdateAgentConfig)
+			agents.GET("/:id/config", agentHandler.GetAgentConfig)
+			agents.PUT("/:id/config", agentHandler.UpdateAgentConfig)
 		}
 
 		// Telemetry Query Interface
 		telemetry := v1.Group("/telemetry")
 		{
-			telemetry.POST("/query", handlers.QueryEvents)
-			telemetry.GET("/events/:id", handlers.GetEvent)
-			telemetry.GET("/statistics", handlers.GetStatistics)
+			telemetry.POST("/query", telemetryHandler.QueryEvents)
+			telemetry.GET("/events/:id", telemetryHandler.GetEvent)
+			telemetry.GET("/statistics", telemetryHandler.GetStatistics)
 		}
 
 		// MITRE ATT&CK Framework
 		mitre := v1.Group("/mitre")
 		{
-			mitre.GET("/tactics", handlers.ListMITRETactics)
-			mitre.GET("/techniques", handlers.ListMITRETechniques)
-			mitre.GET("/coverage", handlers.GetMITRECoverage)
+			mitre.GET("/tactics", telemetryHandler.ListMITRETactics)
+			mitre.GET("/techniques", telemetryHandler.ListMITRETechniques)
+			mitre.GET("/coverage", telemetryHandler.GetMITRECoverage)
 		}
 
 		// Alerting Rules
 		alerts := v1.Group("/alerts")
 		{
-			alerts.GET("/rules", handlers.ListAlertRules)
-			alerts.POST("/rules", handlers.CreateAlertRule)
-			alerts.PUT("/rules/:id", handlers.UpdateAlertRule)
-			alerts.DELETE("/rules/:id", handlers.DeleteAlertRule)
+			alerts.GET("/rules", telemetryHandler.ListAlertRules)
+			alerts.POST("/rules", telemetryHandler.CreateAlertRule)
+			alerts.PUT("/rules/:id", telemetryHandler.UpdateAlertRule)
+			alerts.DELETE("/rules/:id", telemetryHandler.DeleteAlertRule)
 		}
 
 		// License Management
