@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/gin-gonic/gin"
 	log "github.com/sirupsen/logrus"
 
@@ -54,6 +56,32 @@ func main() {
 	}
 	defer database.Close(db)
 
+	// Initialize ClickHouse connection
+	clickhouseAddr := getEnv("CLICKHOUSE_ADDR", "localhost:9000")
+	ch, err := clickhouse.Open(&clickhouse.Options{
+		Addr: []string{clickhouseAddr},
+		Auth: clickhouse.Auth{
+			Database: "default",
+			Username: "default",
+			Password: "",
+		},
+		MaxOpenConns: 10,
+		MaxIdleConns: 5,
+		DialTimeout:  5 * time.Second,
+	})
+
+	if err != nil {
+		log.Warnf("Failed to connect to ClickHouse: %v. Some features will be limited.", err)
+		ch = nil
+	} else {
+		if err := ch.Ping(context.Background()); err != nil {
+			log.Warnf("ClickHouse ping failed: %v. Some features will be limited.", err)
+			ch = nil
+		} else {
+			log.Info("ClickHouse connection established")
+		}
+	}
+
 	// Initialize license service
 	// Note: In production, load keys from secure storage (e.g., AWS KMS, HashiCorp Vault)
 	privateKeyPath := getEnv("LICENSE_PRIVATE_KEY_PATH", "")
@@ -72,8 +100,11 @@ func main() {
 		log.Warn("License key paths not configured. Set LICENSE_PRIVATE_KEY_PATH and LICENSE_PUBLIC_KEY_PATH environment variables.")
 	}
 
+	// Initialize WebSocket hub
+	handlers.InitWebSocketHub()
+
 	// Initialize Gin router
-	router := setupRouter(db, licenseService)
+	router := setupRouter(db, ch, licenseService)
 
 	// Create HTTP server
 	srv := &http.Server{
@@ -109,7 +140,7 @@ func main() {
 	log.Info("Server stopped")
 }
 
-func setupRouter(db *sql.DB, licService *licenseService.LicenseService) *gin.Engine {
+func setupRouter(db *sql.DB, ch driver.Conn, licService *licenseService.LicenseService) *gin.Engine {
 	router := gin.Default()
 
 	// Health check
@@ -127,6 +158,10 @@ func setupRouter(db *sql.DB, licService *licenseService.LicenseService) *gin.Eng
 	agentHandler := handlers.NewAgentHandler(db)
 	telemetryHandler := handlers.NewTelemetryHandler(db)
 	notificationHandler := handlers.NewNotificationHandler(db)
+	aiHandler := handlers.NewAIHandler(db, ch)
+	collaborativeHandler := handlers.NewCollaborativeHandler(db)
+	dataLakeHandler := handlers.NewDataLakeHandler(db)
+	deceptionHandler := handlers.NewDeceptionHandler(db)
 
 	// API v1 routes
 	v1 := router.Group("/api/v1")
@@ -211,6 +246,95 @@ func setupRouter(db *sql.DB, licService *licenseService.LicenseService) *gin.Eng
 			notifications.DELETE("/channels/:id", notificationHandler.DeleteChannel)
 			notifications.POST("/send", notificationHandler.SendNotification)
 			notifications.POST("/test", notificationHandler.TestChannel)
+		}
+
+		// AI-Powered Threat Analysis
+		ai := v1.Group("/ai")
+		{
+			ai.POST("/analyze", aiHandler.GenerateThreatSummary)
+			ai.GET("/config", aiHandler.GetAIConfig)
+			ai.PUT("/config", aiHandler.UpdateAIConfig)
+			ai.GET("/history", aiHandler.ListAnalysisHistory)
+		}
+
+		// Collaborative Threat Hunting
+		collaborative := v1.Group("/collaborative")
+		{
+			// Shared Rules
+			collaborative.POST("/rules/publish", collaborativeHandler.PublishRule)
+			collaborative.GET("/rules/search", collaborativeHandler.SearchRules)
+			collaborative.GET("/rules/:id", collaborativeHandler.GetRule)
+			collaborative.POST("/rules/:id/vote", collaborativeHandler.VoteRule)
+			collaborative.POST("/rules/:id/download", collaborativeHandler.DownloadRule)
+			collaborative.POST("/rules/:id/comments", collaborativeHandler.AddComment)
+			collaborative.GET("/rules/:id/comments", collaborativeHandler.GetComments)
+
+			// Shared IOCs
+			collaborative.POST("/iocs/publish", collaborativeHandler.PublishIOC)
+			collaborative.GET("/iocs/search", collaborativeHandler.SearchIOCs)
+			collaborative.GET("/iocs/:id", collaborativeHandler.GetIOC)
+			collaborative.POST("/iocs/:id/report", collaborativeHandler.ReportIOC)
+
+			// Hunting Queries
+			collaborative.POST("/queries/publish", collaborativeHandler.PublishQuery)
+			collaborative.GET("/queries/search", collaborativeHandler.SearchQueries)
+			collaborative.GET("/queries/:id", collaborativeHandler.GetQuery)
+
+			// Statistics
+			collaborative.GET("/stats", collaborativeHandler.GetCommunityStats)
+		}
+
+		// Security Data Lake (Cold Storage)
+		dataLake := v1.Group("/datalake")
+		{
+			// Configuration
+			dataLake.POST("/config", dataLakeHandler.CreateDataLakeConfig)
+			dataLake.GET("/config/:license_id", dataLakeHandler.GetDataLakeConfig)
+			dataLake.PUT("/config/:license_id", dataLakeHandler.UpdateDataLakeConfig)
+			dataLake.POST("/test", dataLakeHandler.TestDataLakeConnection)
+
+			// Archive Jobs
+			dataLake.POST("/jobs", dataLakeHandler.CreateArchiveJob)
+			dataLake.GET("/jobs/:id", dataLakeHandler.GetArchiveJob)
+			dataLake.GET("/jobs", dataLakeHandler.ListArchiveJobs)
+
+			// Datasets
+			dataLake.GET("/datasets", dataLakeHandler.ListArchivedDatasets)
+			dataLake.POST("/query", dataLakeHandler.QueryArchivedData)
+
+			// Statistics
+			dataLake.GET("/stats", dataLakeHandler.GetDataLakeStatistics)
+		}
+
+		// Deception Technology (Honeypots & Honey Tokens)
+		deception := v1.Group("/deception")
+		{
+			// Honeypots
+			deception.POST("/honeypots", deceptionHandler.CreateHoneypot)
+			deception.GET("/honeypots", deceptionHandler.ListHoneypots)
+			deception.GET("/honeypots/:id", deceptionHandler.GetHoneypot)
+			deception.PUT("/honeypots/:id", deceptionHandler.UpdateHoneypot)
+			deception.DELETE("/honeypots/:id", deceptionHandler.DeleteHoneypot)
+
+			// Honey Tokens
+			deception.POST("/tokens", deceptionHandler.CreateHoneyToken)
+			deception.GET("/tokens", deceptionHandler.ListHoneyTokens)
+
+			// Events
+			deception.POST("/events", deceptionHandler.RecordDeceptionEvent)
+			deception.GET("/events", deceptionHandler.ListDeceptionEvents)
+
+			// Statistics & Templates
+			deception.GET("/stats", deceptionHandler.GetDeceptionStatistics)
+			deception.GET("/templates", deceptionHandler.ListHoneypotTemplates)
+		}
+
+		// WebSocket Live Updates
+		ws := v1.Group("/ws")
+		{
+			ws.GET("/connect", handlers.HandleWebSocket)
+			ws.GET("/stats", handlers.GetConnectionStats())
+			ws.POST("/disconnect/:id", handlers.DisconnectClient)
 		}
 	}
 
