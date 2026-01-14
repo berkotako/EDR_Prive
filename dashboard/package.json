@@ -1,0 +1,51 @@
+{
+  "name": "prive-dashboard",
+  "version": "1.0.0",
+  "description": "Privé EDR/DLP Platform Dashboard",
+  "private": true,
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject",
+    "lint": "eslint src/**/*.{js,jsx,ts,tsx}",
+    "format": "prettier --write src/**/*.{js,jsx,ts,tsx,css,scss}"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.21.1",
+    "react-scripts": "5.0.1",
+    "@mui/material": "^5.15.3",
+    "@mui/icons-material": "^5.15.3",
+    "@emotion/react": "^11.11.3",
+    "@emotion/styled": "^11.11.0",
+    "recharts": "^2.10.3",
+    "axios": "^1.6.5",
+    "date-fns": "^3.2.0",
+    "react-query": "^3.39.3",
+    "zustand": "^4.5.0",
+    "react-hot-toast": "^2.4.1",
+    "framer-motion": "^11.0.3"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.48",
+    "@types/react-dom": "^18.2.18",
+    "@types/node": "^20.11.5",
+    "typescript": "^5.3.3",
+    "eslint": "^8.56.0",
+    "prettier": "^3.2.4"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}
